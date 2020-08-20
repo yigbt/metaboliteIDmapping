@@ -1,7 +1,7 @@
 # This pipeline merges four different source of metabolite ID formats
 # into one large data structure.
 # Sources are: HMDB, Comptox, ChEBI, and graphite R package
-# 
+#
 # Final tibble contains more than 1.000.000 rows with 9 different
 # ID formats.
 
@@ -34,7 +34,7 @@
 #
 #
 # 3) Comptox Chemical Dashboard
-# 
+#
 # Website: https://comptox.epa.gov/dashboard
 # From comptox we retrieved two separated files, one linking to Pubchem and
 # one linking to CAS numbers.
@@ -53,12 +53,12 @@
 # ID formats: DTXCID, DTXSID, CAS
 # Number of metabolites: 875755
 #
-# III - Full-join on both tables based on DTXSID 
+# III - Full-join on both tables based on DTXSID
 # ID formats: DTXCID, DTXSID, CAS, CID, SID
 # Number of metabolites: 875796
 #
 #
-# 
+#
 # 4) Graphite R package
 #
 # Website: https://www.bioconductor.org/packages/release/bioc/html/graphite.html
@@ -495,7 +495,7 @@ if( !file.exists( joined_comptox_graphite) || recompute){
     nona <- j %>%
         dplyr::filter( !is.na( CAS)) %>%
         dplyr::group_by( CAS) %>%
-        tidyr::fill( DTXCID, DTXSID, CID, KEGG, ChEBI, .direction = "downup")
+        tidyr::fill( DTXCID, DTXSID, CID, KEGG, ChEBI, .direction = "downup") %>%
         dplyr::ungroup()
     isna <- j %>% dplyr::filter( is.na( CAS))
 
@@ -774,7 +774,7 @@ if( !file.exists( joined_full) || recompute){
     joined_full <- file.path( rappdirs::user_cache_dir(),
                               "metabolitesMapping.rda",
                               fsep = .Platform$file.sep)
-    
+
     metabolitesMapping <- bind_rows( metabolitesMapping, noMatch)
     save( metabolitesMapping, file = joined_full, compress = "xz")
 
@@ -806,7 +806,7 @@ metabolitesMapping <- metabolitesMapping %>% full_join( comptox_names)
 ## joint remaining HMDB names
 ## These are 99560 entries.
 ## Get all HMDB entries without an associated Name
-## Get their respective position in the metabolitesMapping table and the 
+## Get their respective position in the metabolitesMapping table and the
 ## hmdb_names mapping table
 ## Insert a Position value in metabolitesMapping to make sure that duplicated
 ## HMDB entries both get a valid Name
