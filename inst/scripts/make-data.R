@@ -399,6 +399,8 @@ if( !file.exists( comptoxfile) || recompute){
     comptox_pubchem <- read.csv( file = destfile, header = TRUE, sep = "\t")
     comptox_pubchem <- as_tibble( comptox_pubchem) %>% mutate_all( as.character)
 
+    # TODO
+    # the file reference here dows not contain DTXCID (dsstox_structure_id)
     cat( "Download Comptox CAS IDs ...\n")
     linenr <- grep( "DSSTox identifiers mapped to CAS Numbers and Names File",
                     readLines( masterfile))
