@@ -9,7 +9,7 @@ meta <- data.frame(
     Genome = NA,
     SourceType = "TSV",
     SourceUrl = "https://github.com/yigbt/metaboliteIDmapping/blob/master/inst/scripts/make-data.R",
-    SourceVersion = "Jun 15 2020",
+    SourceVersion = "Apr 19 2021",
     Species = NA,
     TaxonomyId = NA,
     Coordinate_1_based = NA,
@@ -17,8 +17,8 @@ meta <- data.frame(
     Maintainer = "Sebastian Canzler <sebastian.canzler@ufz.de>",
     RDataClass = "Tibble",
     DispatchClass = "Rda",
-    RDataPath = "metaboliteIDmapping/v2/metabolitesMapping.rda",
+    RDataPath = "metaboliteIDmapping/v3/metabolitesMapping.rda",
     Tags = "metabolites:mapping:HMDB:KEGG:ChEBI:Pubchem:Comptox:CAS:Drugbank"
 )
 
-write.csv(meta, file="metadata.v2.csv", row.names=FALSE)
+write.csv(meta, file="metadata.v3.csv", row.names=FALSE)

@@ -191,13 +191,16 @@ create_tibble_chebi <- function( row = data.frame( CAS = NA, KEGG = NA, ChEBI = 
 
 
 Bioconductor_package_list <- c( "graphite")
-R_package_list <-c("dplyr",  "magrittr", "XML", "readxl", "rappdirs", "tidyr", "stringr")
+R_package_list <-c("dplyr",  "magrittr", "XML", "readxl", "rappdirs", "tidyr",
+                   "stringr", "readr", "sets", "conflicted", "R.utils")
 
 load_libraries( c( R_package_list, Bioconductor_package_list), verbose = TRUE)
 
 
 recompute <- 0
 
+conflict_prefer("filter", "dplyr")
+conflict_prefer("%>%", "magrittr")
 
 
 
@@ -341,8 +344,74 @@ if( !file.exists( chebifile) || recompute){
         dplyr::distinct() %>%
         ungroup()
 
+    ## Have a special focus on Tautamers
+    tautamerfile <- file.path( rappdirs::user_cache_dir(),
+                           "chebi_tautamers.tsv",
+                           fsep = .Platform$file.sep)
+    
+    url <- "ftp://ftp.ebi.ac.uk/pub/databases/chebi/Flat_file_tab_delimited/relation.tsv"
+    if( !file.exists( tautamerfile)){
+        
+        cat( "Download ChEBI relations file ...\n")
+        
+        download.file( url = url,
+                       destfile = tautamerfile,
+                       method = "wget",
+                       quiet = TRUE)
+    }
+    
+    
+    tautomers <- read_tsv( tautamerfile) %>%
+        filter( TYPE == "is_tautomer_of") %>% 
+        select( INIT_ID, FINAL_ID)
+    
+    ## create a set of tautomer sets
+    tset <- as.set( apply( tautomers, 1, function(t){
+        as.set( c( t[1], t[2]))
+    }))
+#    tset <- set_union( tset, set( set( 17115, 29200)))
+    
+    ## check for links between those tautomer sets
+    temp <- set()
+    for(s in tset){
+        for( i in tset){
+            if( length( set_intersection( s, i)) >= 1){ s <- set_union(s, i)}
+        }
+        temp <- set_union( temp, set( s))
+    }
+    
+    tset <- lapply( temp, function(s){ 
+        unlist( as.list( s), recursive = FALSE)
+    })
+    
+    
+    ## tautomers are special cases of isomers 
+    ## therefore, we will link them to the same KEGG and CAS number
+    ## the exception are those tautomers that have already the same or disjunct KEGG IDs
+    
+    tautomers_chebi_list <- lapply( tset, function( t){
+        
+        hits <- chebi %>% filter( ChEBI %in% t)
+        if( nrow( hits) != 1){
+            hits
+        } else{
+            hits <- bind_rows( hits, 
+                               tibble( ChEBI = as.character( t), CAS = NA, KEGG = NA)) %>% 
+                tidyr::fill( CAS, KEGG, .direction = "down") %>% 
+                unique()
+            
+            hits
+        }
+        
+    })
+    
+    tautomers <- do.call( bind_rows, tautomers_chebi_list)
+    chebi <- bind_rows( chebi, tautomers) %>%
+        unique()
+    
+    
     ## save rda file
-    save( chebi, file = chebifile)
+    save( chebi, tautomers, file = chebifile)
 
 }else{
 
@@ -388,7 +457,7 @@ if( !file.exists( comptoxfile) || recompute){
 
     cat( "Download Pubchem IDs ...\n")
     destfile <- file.path( rappdirs::user_cache_dir(),
-                           "comptox_pubchemd.tsv",
+                           "comptox_pubchem.tsv",
                            fsep = .Platform$file.sep)
 
     if( !file.exists( destfile)){
@@ -414,16 +483,93 @@ if( !file.exists( comptoxfile) || recompute){
     }
 
     comptox_cas <- readxl::read_xlsx( path = destfile, sheet = 1) %>%
-        dplyr::select( casrn, dsstox_substance_id, dsstox_structure_id, preferred_name)
-    colnames( comptox_cas) <-  c( "CAS", "DTXSID", "DTXCID", "Name")
+        dplyr::select( casrn, dsstox_substance_id, preferred_name)
+    colnames( comptox_cas) <-  c( "CAS", "DTXSID", "Name")
+    
 
     ## combine both comptox data sets
     ## and remove those rows where DTXSIDs do not start with "DTXSID"
     comptox <- dplyr::full_join( comptox_cas, comptox_pubchem, by = "DTXSID") %>%
         filter( str_detect( DTXSID, "DTXSID"))
 
+    
+    
+    ## Since Comptox changed the information that are provided in their 
+    ## download files, we now need an additional file to collect the
+    ## mapping between DTXCID and DTXSID
+    dtx_mapping_file <- file.path( rappdirs::user_cache_dir(),
+                                   "comptox_DTXCID_DTXSID_mapping.rda",
+                                   fsep = .Platform$file.sep)
+    
+    if( !file.exists( dtx_mapping_file) || recompute){
+        
+        ## Now we have also to download the SDF file that contains the 
+        ## mapping between DTXSID and DTXCID
+        linenr <- grep( "DSSTox SDF File",
+                        readLines( masterfile))
+        url <- gsub( "^.*href=\"(.*sdf.gz)\".*", "\\1", readLines( masterfile)[ linenr])
+        
+        destfile <- file.path( rappdirs::user_cache_dir(),
+                               "comptox_SDF_file.sdf.gz",
+                               fsep = .Platform$file.sep)
+        
+        if( !file.exists( destfile) && !file.exists( gsub( ".gz", "", destfile))){
+            download.file( url = url, destfile = destfile,
+                           method =  "wget", quiet = TRUE)
+            ## unzip sdf file
+            gunzip( destfile)
+        }
+        
+        destfile <- gsub( ".gz", "", destfile)
+        
+        comptox_dtxcid <- tibble( DTXSID = character(), DTXCID = character())
+        sdf <- file( destfile, open = "r")
+        dtxcid <- FALSE
+        dtxsid <- FALSE
+        cid <- NULL
+        sid <- NULL
+        
+        ## This may take a while... up to four hours!!!!
+        ## better to create this table on the command line
+        ## grep -P "<DSSTox_Structure_Id>|<PUBCHEM_EXT_DATASOURCE_REGID>" -A 1 comptox_SDF_file.sdf | grep "^DT" |  awk 'BEGIN {RS=""} {gsub(/\nDTXSID/, "\tDTXSID", $0); print $0}' > comptox_DTXCID_DTXSID_mapping.csv 
+        while( length(oneline <- readLines(sdf, n = 1)) > 0){
+            
+            if( str_detect( oneline, "<DSSTox_Structure_Id>")){
+                dtxcid <- TRUE
+            }else if( dtxcid){
+                cid <- oneline
+                dtxcid <- FALSE
+            }else if( str_detect( oneline, "<PUBCHEM_EXT_DATASOURCE_REGID>")){
+                dtxsid <- TRUE
+            }else if( dtxsid){
+                sid <- oneline
+                comptox_dtxcid <- bind_rows( comptox_dtxcid, 
+                                             tibble( DTXSID = as.character(sid), 
+                                                     DTXCID = as.character(cid)))
+                dtxsid <- FALSE
+                cid <- NULL
+                sid <- NULL
+            }
+            
+        }
+        close( sdf)
+        
+        save( comptox_dtxcid, file = dtx_mapping_file)
+    
+    }else{
+        
+        load( file = dtx_mapping_file)
+        
+    }
+    
+    
+    ## Join the DTXCIDs with the existing comptox tibble
+    comptox <- dplyr::full_join( comptox, comptox_dtxcid)
+    
     ## save the tibble
     save( comptox, file = comptoxfile)
+    
+    rm( comptox_cas, comptox_dtxcid, comptox_pubchem)
 
 }else{
 
@@ -433,7 +579,9 @@ if( !file.exists( comptoxfile) || recompute){
 
 ## keep names of metabolites in separate tibble
 comptox_names <- comptox %>% select( DTXSID, Name)
-comptox <- comptox %>% select( -Name)
+comptox <- comptox %>% select( -Name) %>% 
+    relocate( DTXCID, .after=DTXSID)
+
 
 
 
@@ -794,6 +942,36 @@ if( !file.exists( joined_full) || recompute){
 #####################################################################
 #####################################################################
 
+## account for tautomers in the final table
+kegglist <- tautomers %>% pull( KEGG) %>% unique()
+
+metabolitesMapping <- bind_rows(
+    
+    metabolitesMapping %>% filter( ! KEGG %in% kegglist),
+    metabolitesMapping %>% filter( KEGG %in% kegglist) %>%
+        dplyr::group_by( KEGG) %>%
+        tidyr::fill( CAS, HMDB, Drugbank, .direction="downup") %>%
+        ungroup()
+    
+)
+
+unresolved_kegglist <- metabolitesMapping %>% 
+    filter( ! KEGG %in% kegglist, !is.na( KEGG)) %>% 
+    dplyr::group_by( KEGG) %>% 
+    tally() %>% filter( n > 2) %>%
+    pull( KEGG)
+    
+    
+metabolitesMapping <- bind_rows(
+    
+    metabolitesMapping %>% filter( ! KEGG %in% unresolved_kegglist),
+    metabolitesMapping %>% filter( KEGG %in% unresolved_kegglist) %>%
+        dplyr::group_by( KEGG) %>%
+        tidyr::fill( -c( "SID", "KEGG"), .direction="downup") %>%
+        ungroup()
+    
+)
+
 
 ## From Comptox Dashboard and HMDB we were able to extract common names for
 ## the retrieved metabolites. These shall now be merged with the mapping table.
@@ -811,6 +989,7 @@ metabolitesMapping <- metabolitesMapping %>% full_join( comptox_names)
 ## Insert a Position value in metabolitesMapping to make sure that duplicated
 ## HMDB entries both get a valid Name
 ## Remove the Position column in the end.
+metabolitesMapping$Position <- seq( 1,nrow( metabolitesMapping))
 missing_values <- metabolitesMapping %>% filter( !is.na( HMDB) & is.na( Name)) %>% pull( HMDB)
 missing_positions <- metabolitesMapping %>% filter( !is.na( HMDB) & is.na( Name)) %>% pull( Position)
 hmdb_values_present <- metabolitesMapping %>% filter( !is.na( HMDB) & !is.na( Name)) %>% pull( HMDB)
@@ -822,6 +1001,25 @@ missing_values <- missing_values[ tmp]
 hmdb_missing <- match( missing_values, hmdb_names$HMDB)
 metabolitesMapping$Name[ missing_positions] <- hmdb_names$Name[ hmdb_missing]
 
+
+# Now there are a few dozen HMDB entries without a proper name, although the name ist present:
+# for example:
+# A tibble: 3 x 3
+# CAS        HMDB        Name        
+# <chr>      <chr>       <chr>       
+#     1 23513-14-6 HMDB0005783 (6)-Gingerol
+# 2 23513-14-6 HMDB0005783 (6)-Gingerol
+# 3 NA         HMDB0005783 NA
+
+missing_positions <- metabolitesMapping %>% filter( !is.na( HMDB) & is.na( Name)) %>% pull( Position)
+missing_values <- metabolitesMapping %>% filter( !is.na( HMDB) & is.na( Name)) %>% pull( HMDB)
+missing_names <- unlist( lapply( missing_values, function( name){ 
+    hmdb_names <- metabolitesMapping %>% 
+        filter( HMDB == name, !is.na( Name)) %>% 
+        pull( Name) %>% 
+        unique()}))
+
+metabolitesMapping$Name[ missing_positions] <- missing_names
 metabolitesMapping <- metabolitesMapping %>% select( -Position)
 
 save( metabolitesMapping, file = joined_full, compress = "xz")
