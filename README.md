@@ -58,15 +58,16 @@ ah <- AnnotationHub()
 datasets <- query( ah, "metaboliteIDmapping")
 ```
 
-Currently, there are two versions of the mapping table. 
+Currently, there are three versions of the mapping table. 
 
 * AH79817 represents the original ID mapping containing 9 different ID formats
-* AH83115 is the current mapping table which also includes common names for each compound
+* AH83115 mapping table which also includes common names for each compound
+* AH91792 current version of the table that accounts for tautomers 
 
 For implanting this data in your code, it is recommended to use the
 AHid for retrieval:
 ```R
-data <- ah[["AH83115"]]
+data <- ah[["AH91792"]]
 ```
 
 # LICENSE

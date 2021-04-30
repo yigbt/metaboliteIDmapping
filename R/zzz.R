@@ -6,7 +6,7 @@
     
     ns <- asNamespace( pkgname)
     ah <- AnnotationHub::AnnotationHub()
-    metabolitesMapping <- ah[["AH83115"]]
+    metabolitesMapping <- ah[["AH91792"]]
         
     assign( "metabolitesMapping", metabolitesMapping, envir = ns)
     
