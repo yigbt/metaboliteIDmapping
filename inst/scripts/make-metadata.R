@@ -5,7 +5,7 @@ meta <- data.frame(
     		         "and 9 distinct metabolite ID formats that orignated ",
 			 "from 4 different databases: HMDB, Comptox Dashboard, ",
 			 "ChEBi, and graphite R package."),
-    BiocVersion = "3.12",
+    BiocVersion = "3.13",
     Genome = NA,
     SourceType = "TSV",
     SourceUrl = "https://github.com/yigbt/metaboliteIDmapping/blob/master/inst/scripts/make-data.R",
